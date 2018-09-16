@@ -1,0 +1,480 @@
+#!/bin/bash
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+LIGHT_GREY='\033[0;37m'
+NORMAL='\033[0m'
+
+function EchoMessage() {
+    local message=$1
+    local colour=${2:-${NORMAL}}
+    echo -e "${colour}${message}${NORMAL}" >&1
+    return 0
+}
+
+function EchoOverwriteMessage() {
+    local message=$1
+    local colour=${2:-${NORMAL}}
+    echo -ne "\r${colour}${message}${NORMAL}" >&1
+    return 0
+}
+
+function EchoWarning() {
+    local message=$1
+    echo -e "${YELLOW}${message}${NORMAL}" >&2
+    return 0
+}
+
+function EchoError() {
+    local message=$1
+    echo -e "${RED}${message}${NORMAL}" >&2
+    return 0
+}
+
+function GetRegexMatches() {
+    local __regex_result=$1
+    local string=$2
+    local regex=$3
+    
+    if [[ $string =~ $regex ]]; then
+        eval "$__regex_result="'("${BASH_REMATCH[@]:1}")'
+        return 0
+    fi
+
+    return 1
+}
+
+function GetRegexMatch() {
+    local string=$1
+    local regex=$2
+    local errorMessage=$3
+
+    if ! GetRegexMatches matches "$string" "$regex"; then
+        EchoError "${errorMessage}"
+        exit 1
+    fi
+
+    local numMatches=${#matches[@]}
+
+    if [ "$numMatches" -ne "1" ]; then
+       EchoError "${errorMessage}"
+       exit 1
+    fi
+
+    echo ${matches[0]}
+    return 0
+}
+
+function TrimWhitespace() {
+    local var="$*"
+    var="${var#"${var%%[![:space:]]*}"}"
+    var="${var%"${var##*[![:space:]]}"}"   
+    echo -n "$var"
+}
+
+function ReadNextLine() {
+    local __nextLine=$1
+    
+    if IFS='' read -r __line || [[ -n "$__line" ]]; then
+        __line="$(TrimWhitespace $__line)"
+
+        eval "$__nextLine="'"$__line"'
+        return 0
+    fi
+
+    return 1
+}
+
+function ReadNextRealLine() {
+    local __nextLine=$1
+    commentRegex='^[[:space:]]*(#|$)'
+
+    while true; do
+        if ReadNextLine __realLine; then
+            if ! GetRegexMatches res "$__realLine" "$commentRegex" ; then
+                eval "$__nextLine="'"$__realLine"'
+                return 0
+            fi
+        else
+            return 1
+        fi
+    done
+
+    # Unreachable.
+    return 1
+}
+
+function TryToGetRegexOnNextLine() {
+    local __regex=$1
+
+    if ! ReadNextRealLine __line; then
+        return 1
+    fi
+
+    local match
+    match=$(GetRegexMatch "$__line" "$__regex" "Could not read report file") || exit 2
+    echo "$match"
+    return 0 
+}
+
+function TryToGetRegexMatchesOnNextLine() {
+    local __matchesResult=$1
+    local __regex=$2
+
+    if ! ReadNextRealLine __line; then
+        return 1
+    fi
+
+    if ! GetRegexMatches __matches "$__line" "$__regex"; then
+        EchoError "${errorMessage}"
+        exit 2
+    fi
+
+    eval "$__matchesResult="'("${__matches[@]}")'
+    return 0 
+}
+
+function GetRegexOnNextLine() {
+    local __regex=$1
+
+    if ! echo $(TryToGetRegexOnNextLine "$__regex"); then
+        EchoError "Unexpected end of file"
+        exit 1
+    fi
+    
+    return 0
+}
+
+function GetUniqueFileName() {
+    local nameBase=$1
+    local extension=$2
+    local n=1;
+
+    if [ ! -f "$nameBase$extension" ]; then
+        echo "$nameBase$extension"
+        return 0
+    fi
+
+    while [ -f "${nameBase}_$n$extension" ]; do 
+        ((++n))
+    done
+    
+    echo "${nameBase}_$n$extension"
+    return 0
+}
+
+if [[ -z "$DITTO_TOKEN" ]]; then
+    EchoError "Environment variable DITTO_TOKEN was not set"
+    exit 1
+fi
+
+branchInfo=$(GetRegexMatch "$(git branch -vv)" ".*\[(.*)\].*" "Failed to find branch information") || exit
+
+branchInfoArray=(${branchInfo//\// })
+remoteName=${branchInfoArray[0]}
+branch=${TRAVIS_BRANCH:-${APPVEYOR_REPO_BRANCH:-${branchInfoArray[1]}}}
+
+regex="$remoteName[[:space:]](.*)[[:space:]]\(fetch\)"
+remoteName=$(GetRegexMatch "$(git remote -v)" "$remoteName[[:space:]](.*)[[:space:]]\(fetch\)" "Failed to find remote with name $remoteName") || exit
+
+if ! GetRegexMatches slug "$remoteName" ".*[/:](.*[/:].*).git"; then
+    EchoError "Failed to analyze git slug for remote $remoteName"
+    exit 1
+fi
+
+slugArray=(${slug//\// })
+userName=${slugArray[0]}
+repoName=${slugArray[1]}
+
+EchoMessage "Found user name: ${LIGHT_GREY}$userName"
+EchoMessage "Found repo name: ${LIGHT_GREY}$repoName"
+EchoMessage "Found branch: ${LIGHT_GREY}$branch"
+
+report_found=false
+
+for f in ./massif.out*; do
+    if [[ $f =~ massif.out.[0-9]+$ ]]; then
+        if [ $report_found == "true" ]; then
+            EchoError "Multiple Massif reports found"
+            exit 1
+        fi
+
+        EchoMessage "Found report: ${LIGHT_GREY}$f"
+        massif_report_loc=$f
+        report_found=true
+    fi
+done
+
+if [ "$report_found" = false ]; then
+    EchoError "No report matching massif.out.[number] was found"
+    exit 1
+fi
+
+descRegex='desc:[[:space:]](.*)$'
+cmdRegex='cmd:[[:space:]](.*)$'
+timeUnitRegex='time_unit:[[:space:]](ms|B|i)$'
+snapshotRegex='snapshot=([[:digit:]]+)'
+timeRegex='time=([[:digit:]]+)'
+memHeapRegex='mem_heap_B=([[:digit:]]+)'
+memExtraRegex='mem_heap_extra_B=([[:digit:]]+)'
+memStackRegex='mem_stacks_B=([[:digit:]]+)'
+heapTreeRegex='heap_tree=([a-zA-Z]+)'
+heapTreeEntryRegex='[[:space:]]*n([[:digit:]]+):[[:space:]]([[:digit:]]+)[[:space:]](.*)'
+heapTreeDetailsRegex='([a-fA-F0-9x]+):[[:space:]](.*)[[:space:]]\(in[[:space:]]([^:]*):?([[:digit:]]*)?\)$'
+
+jsonFileName=$(GetUniqueFileName ditto ".$RANDOM.json") || exit
+
+function ParseHeader() {
+    local fileName=$1
+
+    desc=$(GetRegexOnNextLine "$descRegex") || exit
+    cmd=$(GetRegexOnNextLine "$cmdRegex") || exit
+    timeUnit=$(GetRegexOnNextLine "$timeUnitRegex") || exit
+
+    cat << EOF >> $jsonFileName
+    "desc":      "$desc",
+    "cmd":       "$cmd",
+    "time_unit": "$timeUnit",
+EOF
+    return 0
+}
+
+function ParseSnapshots() {
+    local jsonFileName=$1
+
+    cat << EOF >> $jsonFileName
+    "snapshots": [
+EOF
+
+    local emitCommaBefore=false
+    local counter=0
+
+    while ParseSnapshot $jsonFileName $emitCommaBefore; do
+        EchoOverwriteMessage "Parsing snapshot ${LIGHT_GREY}$counter"
+        counter=$((counter + 1))
+        emitCommaBefore=true
+    done
+
+    EchoOverwriteMessage "\n"
+    cat << EOF >> $jsonFileName
+    ]
+EOF
+
+    return 0
+}
+
+function ParseSnapshot() {
+    local jsonFileName=$1
+    local emitCommaBefore=$2
+
+    local snapshotId
+    snapshotId=$(TryToGetRegexOnNextLine "$snapshotRegex")
+
+    local res=$?;
+    [ "$res" -eq "1" ] && return 1
+    [ "$res" -eq "2" ] && exit 1
+
+    local snapshotTime
+    snapshotTime=$(TryToGetRegexOnNextLine "$timeRegex") || exit
+
+    local memHeap
+    memHeap=$(TryToGetRegexOnNextLine "$memHeapRegex") || exit
+
+    local memHeapExtra
+    memHeapExtra=$(TryToGetRegexOnNextLine "$memExtraRegex") || exit
+
+    local memStack
+    memStack=$(TryToGetRegexOnNextLine "$memStackRegex") || exit
+
+    local heapTreeField
+    heapTreeField=$(TryToGetRegexOnNextLine "$heapTreeRegex") || exit
+
+    if [ "$emitCommaBefore" = true ]; then
+        cat << EOF >> $jsonFileName
+    ,
+EOF
+    fi
+
+    cat << EOF >> $jsonFileName
+    {
+        "id":             $snapshotId,
+        "time":           $snapshotTime,
+        "mem_heap":       $memHeap,
+        "mem_heap_extra": $memHeapExtra,
+        "mem_stack":      $memStack,     
+EOF
+
+    local isDetailed=false
+    local isPeak=false
+
+    if [ "$heapTreeField" != "empty" ]; then
+        isDetailed=true
+
+        if [ "$heapTreeField" = "peak" ]; then
+            isPeak=true
+        fi
+
+        cat << EOF >> $jsonFileName
+        "heap_tree":
+EOF
+
+        ParseHeapTree $jsonFileName "false"
+    
+    else
+        cat << EOF >> $jsonFileName
+        "heap_tree":      null
+EOF
+    fi
+
+    cat << EOF >> $jsonFileName
+    }
+EOF
+
+    return 0
+}
+
+function ParseHeapTree() {
+    local jsonFileName=$1
+    local emitCommaBefore=$2
+
+    TryToGetRegexMatchesOnNextLine matches $heapTreeEntryRegex 
+    local res=$?
+    [ "$res" -eq "1" ] && ( EchoError "Failed to parse report"; exit 1 )
+    [ "$res" -eq "2" ] && exit 1
+
+    local numMatches=${#matches[@]}
+
+    if [ "$numMatches" -ne "3" ]; then
+       EchoError "Failed to parse report"
+       exit 1
+    fi
+
+    local numChildren=${matches[0]}
+    local numBytes=${matches[1]}
+    local details=${matches[2]}
+    local address=${matches[0]}
+    local functionName
+    local filePath
+    local lineNumber
+
+    if [[ ! -z  $details ]] && GetRegexMatches matches "$details" "$heapTreeDetailsRegex"; then
+        numMatches=${#matches[@]}
+
+        if [ "$numMatches" -ne "4" ]; then
+            EchoError "Failed to parse report"
+            exit 1
+        fi
+
+        address=${matches[0]}
+        functionName=${matches[1]}
+        filePath=${matches[2]}
+        lineNumber=${matches[3]}
+    fi
+
+    if [[ -z "$address" ]]; then
+        address="null"
+    else
+        address="\"$address\""
+    fi
+
+    if [[ -z "$functionName" ]]; then
+        functionName="null"
+    else
+        functionName="\"$functionName\""
+    fi
+
+    if [[ -z "$filePath" ]]; then
+        filePath="null"
+    else
+        filePath="\"$filePath\""
+    fi
+
+    if [[ -z "$lineNumber" ]]; then
+        lineNumber="null"
+    else
+        lineNumber="\"$lineNumber\""
+    fi
+
+    address=${address:-"null"}
+    functionName=${functionName:-"null"}
+    filePath=${filePath:-"null"}
+    lineNumber=${lineNumber:-"null"}
+
+    if [ "$emitCommaBefore" = true ]; then
+        echo -ne "," >> $jsonFileName
+    fi
+
+    echo -ne "{\"num_bytes\": $numBytes, \"address\": $address, \"function\": $functionName, \"file\": $filePath, \"line\": $lineNumber, \"children\": [" >> $jsonFileName
+
+    if [ "$numChildren" -ge "1" ]; then
+        notFirstTime=false
+
+        for i in $(seq 1 $numChildren); do
+            ParseHeapTree $jsonFileName $notFirstTime
+            notFirstTime=true
+        done
+    fi
+
+    echo -ne "]}" >> $jsonFileName
+}
+
+(
+    cat << EOF >> $jsonFileName
+{
+EOF
+    ParseHeader $jsonFileName
+    ParseSnapshots $jsonFileName
+
+    cat << EOF >> $jsonFileName
+}
+EOF
+) < $massif_report_loc
+
+EchoMessage "Compressing report and uploading to Ditto"
+
+getUploadLinkUrl='https://ditt.io/upload'
+res=$(curl --silent --write-out "|%{http_code}" --form user=$userName --form repo=$repoName --form branch=$branch --form token=$DITTO_TOKEN $getUploadLinkUrl)
+
+if [ "$?" -ne "0" ]; then
+    EchoError "An unknown error occurred"
+    exit 1;
+fi
+
+IFS='|' read -ra resArray <<< "$res"
+message=${resArray[0]}
+statusCode=${resArray[1]}
+
+if [ "${statusCode:-400}" -ne "200" ]; then
+    EchoError "Upload failed: $message"
+    exit 1
+fi
+
+uploadUrl=$message
+
+if [[ -z $uploadUrl ]]; then
+    EchoError "Upload failed: no url given"
+    exit 1
+fi
+
+res=$(cat $jsonFileName | gzip -nfc9 | curl --silent --write-out "|%{http_code}" -X PUT -H 'Content-Type: text/plain' -H 'Content-Encoding: gzip' -d @- $uploadUrl)
+
+if [ "$?" -ne "0" ]; then
+    EchoError "An unknown error occurred"
+    exit 1;
+fi
+
+IFS='|' read -ra resArray <<< "$res"
+message=${resArray[0]}
+statusCode=${resArray[1]}
+
+rm $jsonFileName
+
+if [ "${statusCode:-400}" -ne "200" ]; then
+    EchoError "Upload failed: $message"
+    exit 1
+fi
+
+EchoMessage "Upload succeeded" "$GREEN"
+exit 0
