@@ -170,7 +170,7 @@ if [[ -z "$DITTO_TOKEN" ]]; then
     exit 1
 fi
 
-branchInfo=$(GetRegexMatch "$(git branch -vv)" ".*\[(.*)\].*" "Failed to find branch information") || exit
+branchInfo=$(GetRegexMatch "$(git branch -vv)" ".*[[:space:]](.*)[[:space:]].*" "Failed to find branch information") || exit
 
 branchInfoArray=(${branchInfo//\// })
 remoteName=${branchInfoArray[0]}
