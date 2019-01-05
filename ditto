@@ -165,52 +165,16 @@ function GetUniqueFileName() {
     return 0
 }
 
-if [[ -z "$DITTO_TOKEN" ]]; then
-    EchoError "Environment variable DITTO_TOKEN was not set"
-    exit 1
-fi
+function GetOid() {
+    local oid=$(git rev-parse HEAD)
 
-branchInfo=$(GetRegexMatch "$(git branch -vv)" ".*[[:space:]](.*)[[:space:]].*" "Failed to find branch information") || exit
-
-branchInfoArray=(${branchInfo//\// })
-remoteName=${branchInfoArray[0]}
-branch=${TRAVIS_BRANCH:-${APPVEYOR_REPO_BRANCH:-${branchInfoArray[1]}}}
-
-regex="$remoteName[[:space:]](.*)[[:space:]]\(fetch\)"
-remoteName=$(GetRegexMatch "$(git remote -v)" "$remoteName[[:space:]](.*)[[:space:]]\(fetch\)" "Failed to find remote with name $remoteName") || exit
-
-if ! GetRegexMatches slug "$remoteName" ".*[/:](.*[/:].*).git"; then
-    EchoError "Failed to analyze git slug for remote $remoteName"
-    exit 1
-fi
-
-slugArray=(${slug//\// })
-userName=${slugArray[0]}
-repoName=${slugArray[1]}
-
-EchoMessage "Found user name: ${LIGHT_GREY}$userName"
-EchoMessage "Found repo name: ${LIGHT_GREY}$repoName"
-EchoMessage "Found branch: ${LIGHT_GREY}$branch"
-
-report_found=false
-
-for f in ./massif.out*; do
-    if [[ $f =~ massif.out.[0-9]+$ ]]; then
-        if [ $report_found == "true" ]; then
-            EchoError "Multiple Massif reports found"
-            exit 1
-        fi
-
-        EchoMessage "Found report: ${LIGHT_GREY}$f"
-        massif_report_loc=$f
-        report_found=true
+    if [ "$?" -neq "0" ]; then
+        EchoError "Failed to get SHA"
+        exit 1
     fi
-done
 
-if [ "$report_found" = false ]; then
-    EchoError "No report matching massif.out.[number] was found"
-    exit 1
-fi
+    echo "$oid"
+}
 
 descRegex='desc:[[:space:]](.*)$'
 cmdRegex='cmd:[[:space:]](.*)$'
@@ -223,8 +187,6 @@ memStackRegex='mem_stacks_B=([[:digit:]]+)'
 heapTreeRegex='heap_tree=([a-zA-Z]+)'
 heapTreeEntryRegex='[[:space:]]*n([[:digit:]]+):[[:space:]]([[:digit:]]+)[[:space:]](.*)'
 heapTreeDetailsRegex='([a-fA-F0-9x]+):[[:space:]](.*)[[:space:]]\(in[[:space:]]([^:]*):?([[:digit:]]*)?\)$'
-
-jsonFileName=$(GetUniqueFileName ditto ".$RANDOM.json") || exit
 
 function ParseHeader() {
     local fileName=$1
@@ -420,22 +382,97 @@ function ParseHeapTree() {
     echo -ne "]}" >> $jsonFileName
 }
 
-(
-    cat << EOF >> $jsonFileName
+# -------------------------------
+
+
+if [[ -z "$DITTO_TOKEN" ]]; then
+    EchoError "Environment variable DITTO_TOKEN was not set"
+    exit 1
+fi
+
+oid=$(GetOid)
+branchInfo=$(GetRegexMatch "$(git branch -vv)" ".*\[(.*)\].*" "Failed to find branch information") || exit
+
+branchInfoArray=(${branchInfo//\// })
+remoteName=${branchInfoArray[0]}
+#branch=${TRAVIS_BRANCH:-${APPVEYOR_REPO_BRANCH:-${branchInfoArray[1]}}}
+
+regex="$remoteName[[:space:]](.*)[[:space:]]\(fetch\)"
+remoteName=$(GetRegexMatch "$(git remote -v)" "$remoteName[[:space:]](.*)[[:space:]]\(fetch\)" "Failed to find remote with name $remoteName") || exit
+
+if ! GetRegexMatches slug "$remoteName" ".*[/:](.*[/:].*).git"; then
+    EchoError "Failed to analyze git slug for remote $remoteName"
+    exit 1
+fi
+
+slugArray=(${slug//\// })
+userName=${slugArray[0]}
+repoName=${slugArray[1]}
+
+EchoMessage "Found user name: ${LIGHT_GREY}$userName"
+EchoMessage "Found repo name: ${LIGHT_GREY}$repoName"
+EchoMessage "Found SHA: ${LIGHT_GREY}$oid"
+
+numReports=0
+for f in ./massif.out*; do
+    if [[ $f =~ massif.out.[0-9]+$ ]]; then
+        numReports=$((numReports + 1))
+    fi
+done
+
+if [ "$numReports" -eq "0" ];; then
+    EchoError "No report matching massif.out.[number] was found"
+    exit 1
+fi
+
+if [ "$numReports" -gt "1" ]; then
+    EchoWarning "Multiple Massif reports found - this is expected for programs with multithreaded programs"
+fi
+
+jsonFileName=$(GetUniqueFileName ditto ".$RANDOM.json") || exit
+
+cat << EOF >> $jsonFileName
+[
+EOF
+
+reportNumber=1
+for f in ./massif.out*; do
+    if [[ $f =~ massif.out.[0-9]+$ ]]; then
+        EchoMessage "Found report $reportNumber / $numReports: ${LIGHT_GREY}$f"
+        massif_report_loc=$f
+        reportFound=true
+
+        (
+            cat << EOF >> $jsonFileName
 {
 EOF
-    ParseHeader $jsonFileName
-    ParseSnapshots $jsonFileName
-
-    cat << EOF >> $jsonFileName
+            ParseHeader $jsonFileName
+            ParseSnapshots $jsonFileName
+            if [ "$reportNumber" -lt "$numReports" ]; then
+                cat << EOF >> $jsonFileName
+},
+EOF
+            else
+                cat << EOF >> $jsonFileName
 }
 EOF
-) < $massif_report_loc
+            fi
+            ) < $massif_report_loc
 
-EchoMessage "Compressing report and uploading to Ditto"
+        reportNumber=$((reportNumber + 1))
+    fi
+done
 
-getUploadLinkUrl='https://ditt.io/upload'
-res=$(curl --silent --write-out "|%{http_code}" --form user=$userName --form repo=$repoName --form branch=$branch --form token=$DITTO_TOKEN $getUploadLinkUrl)
+cat << EOF >> $jsonFileName
+]
+EOF
+
+EchoMessage "Compressing report(s) and uploading to Ditto"
+
+#getUploadLinkUrl='https://ditt.io/upload'
+getUploadLinkUrl='http://localhost:5000/upload'
+
+res=$(curl --silent --write-out "|%{http_code}" --form user=$userName --form repo=$repoName --form oid=$oid --form token=$DITTO_TOKEN $getUploadLinkUrl)
 
 if [ "$?" -ne "0" ]; then
     EchoError "An unknown error occurred"
@@ -452,6 +489,8 @@ if [ "${statusCode:-400}" -ne "200" ]; then
 fi
 
 uploadUrl=$message
+
+echo "Upload url: $uploadUrl"
 
 if [[ -z $uploadUrl ]]; then
     EchoError "Upload failed: no url given"
