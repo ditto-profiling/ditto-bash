@@ -73,14 +73,56 @@ function GetRegexMatch() {
 #---------------------------------------------------------------------------------------------------
 
 function GetOid() {
-    local oid=$(git rev-parse HEAD)
+    local ciProvider=$1
 
-    if [ "$?" -ne "0" ]; then
-        EchoError "Failed to get SHA"
-        exit 1
+    if [ "$ciProvider" = "Travis CI" ]; then
+        echo "$TRAVIS_COMMIT"
+    elif [ "$ciProvider" = "CircleCI" ]; then
+        echo "$CIRCLE_SHA1"
+    elif [ "$ciProvider" = "Docker" ]; then
+        echo "$SOURCE_COMMIT"
+    elif [ "$ciProvider" = "GitLab CI" ]; then
+        echo "$CI_COMMIT_SHA"
+    elif [ "$ciProvider" = "Jenkins" ]; then
+        echo "$GIT_COMMIT"
+    else
+        local oid=$(git rev-parse HEAD)
+
+        if [ "$?" -ne "0" ]; then
+            EchoError "Failed to get SHA"
+            exit 1
+        fi
+
+        echo "$oid"
     fi
+}
 
-    echo "$oid"
+#---------------------------------------------------------------------------------------------------
+
+function GetSlug() {
+    local ciProvider=$1
+
+    if [ "$ciProvider" = "Travis CI" ]; then
+        echo "$TRAVIS_REPO_SLUG"
+    elif [ "$ciProvider" = "CircleCI" ]; then
+        echo "$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
+    elif [ "$ciProvider" = "Docker" ]; then
+        echo "$DOCKER_REPO"
+    else
+        branchInfo=$(GetRegexMatch "$(git branch -vv)" ".*\[(.*)\].*" "Failed to find branch information") || exit
+        branchInfoArray=(${branchInfo//\// })
+        remoteName=${branchInfoArray[0]}
+
+        regex="$remoteName[[:space:]](.*)[[:space:]]\(fetch\)"
+        remoteName=$(GetRegexMatch "$(git remote -v)" "$remoteName[[:space:]](.*)[[:space:]]\(fetch\)" "Failed to find remote with name $remoteName") || exit
+
+        if ! GetRegexMatches slug "$remoteName" ".*[/:](.*[/:].*).git"; then
+            EchoError "Failed to analyze git slug for remote $remoteName"
+            exit 1
+        fi
+
+        echo "$slug"
+    fi
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -105,23 +147,39 @@ function GetUniqueFileName() {
 
 #---------------------------------------------------------------------------------------------------
 
+function DetectCIProvider() {
+    if ! [ -z ${TRAVIS+x} ]; then
+        echo "Travis CI"
+    elif ! [ -z ${CIRCLECI+x} ]; then
+        echo "CircleCI"
+    elif ! [ -z ${DOCKER_REPO+x} ]; then
+        echo "Docker"
+    elif ! [ -z ${GITLAB_CI+x} ]; then
+        echo "GitLab CI"
+    elif ! [ -z ${CIRCLECI+x} ]; then
+        echo "CircleCI"
+    elif ! [ -z ${JENKINS_URL+x} ]; then
+        echo "Jenkins"
+    fi
+}
+
+#---------------------------------------------------------------------------------------------------
+
 if [[ -z "$DITTO_TOKEN" ]]; then
     EchoError "Environment variable DITTO_TOKEN was not set"
     exit 1
 fi
 
-oid=$(GetOid)
-branchInfo=$(GetRegexMatch "$(git branch -vv)" ".*\[(.*)\].*" "Failed to find branch information") || exit
-branchInfoArray=(${branchInfo//\// })
-remoteName=${branchInfoArray[0]}
+ciProvider=$(DetectCIProvider)
 
-regex="$remoteName[[:space:]](.*)[[:space:]]\(fetch\)"
-remoteName=$(GetRegexMatch "$(git remote -v)" "$remoteName[[:space:]](.*)[[:space:]]\(fetch\)" "Failed to find remote with name $remoteName") || exit
-
-if ! GetRegexMatches slug "$remoteName" ".*[/:](.*[/:].*).git"; then
-    EchoError "Failed to analyze git slug for remote $remoteName"
-    exit 1
+if [ "${ciProvider} " != " " ]; then
+    EchoMessage "Found CI provider: ${LIGHT_GREY}$ciProvider"
+else
+    EchoMessage "Not using CI provider"
 fi
+
+oid=$(GetOid "$ciProvider")
+slug=$(GetSlug "$ciProvider")
 
 slugArray=(${slug//\// })
 userName=${slugArray[0]}
@@ -152,6 +210,9 @@ if [ "$multipleReportsFound" = true ]; then
     EchoWarning "Multiple heaptrack reports found; uploading most recent one"
 fi
 
+command -v gzip >/dev/null 2>&1 || { EchoError "gzip required to check uncompressed size"; exit; }
+createdNewGzip=false
+
 # We require gzip formatting, not zstd
 if [ "${fileLocation: -3:3}" = "zst" ]; then
     EchoMessage "Recompressing using gzip"
@@ -159,15 +220,27 @@ if [ "${fileLocation: -3:3}" = "zst" ]; then
     tmpFileLocation=$(GetUniqueFileName ditto ".$RANDOM")
     zstd -d -o $tmpFileLocation $fileLocation >/dev/null 2>&1 || { EchoError "Failed to decompress zstd file"; exit; }
     fileLocation="$tmpFileLocation.gz"
+    fileSize=$(cat $tmpFileLocation | wc -c)
     gzip -nf9 $tmpFileLocation > $fileLocation || { EchoError "Failed to compress gzip file"; exit; }
+    createdNewGzip=true
+fi
+
+if [ -z "${fileSize+xxx}" ]; then 
+    fileSize=$(gzip -dc $fileLocation | wc -c)
+fi
+
+EchoMessage "Decompressed file size: $fileSize bytes"
+
+if [ "$fileSize" -ge "1073741824" ]; then
+    EchoError "Decompressed file sizes larger than 1GiB are not currently allowed"
+    exit
 fi
 
 EchoMessage "Uploading to Ditto"
-#getUploadLinkUrl='https://ditt.io/upload'
-getUploadLinkUrl='https://us-central1-ditto-profiling.cloudfunctions.net/uploadRequest'
+getUploadLinkUrl='https://ditt.io/upload'
 
-command -v curl >/dev/null 2>&1 || { EchoError "curl required to upload reports but it was not found"; exit; }
-res=$(curl --silent --write-out "|%{http_code}" --form user=$userName --form repo=$repoName --form oid=$oid --form token=$DITTO_TOKEN $getUploadLinkUrl)
+command -v curl >/dev/null 2>&1 || { EchoError "curl is required to upload reports but it was not found"; exit; }
+res=$(curl --silent --write-out "|%{http_code}" --form user=$userName --form repo=$repoName --form oid=$oid --form type=heaptrack --form token=$DITTO_TOKEN $getUploadLinkUrl)
 
 if [ "$?" -ne "0" ]; then
     EchoError "An unknown error occurred"
@@ -191,7 +264,10 @@ if [[ -z $uploadUrl ]]; then
 fi
 
 res=$(cat $fileLocation | curl --write-out "|%{http_code}" -H 'Content-Type: text/plain' -H 'Content-Encoding: gzip' --upload-file $fileLocation $uploadUrl)
-rm $fileLocation
+
+if [ "$createdNewGzip" = true ]; then
+    rm $fileLocation
+fi
 
 if [ "$?" -ne "0" ]; then
     EchoError "An unknown error occurred"
