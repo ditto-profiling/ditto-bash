@@ -237,7 +237,7 @@ if [ "$fileSize" -ge "1073741824" ]; then
 fi
 
 EchoMessage "Uploading to Ditto"
-getUploadLinkUrl='https://ditt.io/upload'
+getUploadLinkUrl='https://api.ditt.io/upload'
 
 command -v curl >/dev/null 2>&1 || { EchoError "curl is required to upload reports but it was not found"; exit; }
 res=$(curl --silent --write-out "|%{http_code}" --form user=$userName --form repo=$repoName --form oid=$oid --form type=heaptrack --form token=$DITTO_TOKEN $getUploadLinkUrl)
