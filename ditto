@@ -74,18 +74,21 @@ function GetRegexMatch() {
 
 function GetOid() {
     local ciProvider=$1
+    local commitOid=""
 
     if [ "$ciProvider" = "Travis CI" ]; then
-        echo "$TRAVIS_COMMIT"
+        commitOid="$TRAVIS_COMMIT"
     elif [ "$ciProvider" = "CircleCI" ]; then
-        echo "$CIRCLE_SHA1"
+        commitOid="$CIRCLE_SHA1"
     elif [ "$ciProvider" = "Docker" ]; then
-        echo "$SOURCE_COMMIT"
+        commitOid="$SOURCE_COMMIT"
     elif [ "$ciProvider" = "GitLab CI" ]; then
-        echo "$CI_COMMIT_SHA"
+        commitOid="$CI_COMMIT_SHA"
     elif [ "$ciProvider" = "Jenkins" ]; then
-        echo "$GIT_COMMIT"
-    else
+        commitOid="$GIT_COMMIT"
+    fi
+
+    if [ -z "$commitOid" ]; then
         local oid=$(git rev-parse HEAD)
 
         if [ "$?" -ne "0" ]; then
@@ -93,22 +96,27 @@ function GetOid() {
             exit 1
         fi
 
-        echo "$oid"
+        commitOid="$oid"
     fi
+
+    echo "$oid"
 }
 
 #---------------------------------------------------------------------------------------------------
 
 function GetSlug() {
     local ciProvider=$1
+    local repoSlug=""
 
     if [ "$ciProvider" = "Travis CI" ]; then
-        echo "$TRAVIS_REPO_SLUG"
+        repoSlug="$TRAVIS_REPO_SLUG"
     elif [ "$ciProvider" = "CircleCI" ]; then
-        echo "$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
+        repoSlug="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
     elif [ "$ciProvider" = "Docker" ]; then
-        echo "$DOCKER_REPO"
-    else
+        repoSlug="$DOCKER_REPO"
+    fi
+
+    if [ -z "$repoSlug" ]; then
         branchInfo=$(GetRegexMatch "$(git branch -vv)" ".*\[(.*)\].*" "Failed to find branch information") || exit
         branchInfoArray=(${branchInfo//\// })
         remoteName=${branchInfoArray[0]}
@@ -121,8 +129,10 @@ function GetSlug() {
             exit 1
         fi
 
-        echo "$slug"
+        repoSlug="$slug"
     fi
+
+    echo "$repoSlug"
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -175,7 +185,7 @@ ciProvider=$(DetectCIProvider)
 if [ "${ciProvider} " != " " ]; then
     EchoMessage "Found CI provider: ${LIGHT_GREY}$ciProvider"
 else
-    EchoMessage "Not using CI provider"
+    EchoMessage "No CI provider detected"
 fi
 
 oid=$(GetOid "$ciProvider")
