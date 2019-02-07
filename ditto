@@ -241,8 +241,8 @@ fi
 
 EchoMessage "Decompressed file size: $fileSize bytes"
 
-if [ "$fileSize" -ge "1073741824" ]; then
-    EchoError "Decompressed file sizes larger than 1GiB are not currently allowed"
+if [ "$fileSize" -ge "524288000" ]; then
+    EchoError "Decompressed file sizes larger than 500 MiB are not currently allowed"
     exit
 fi
 
@@ -300,21 +300,7 @@ EchoMessage "Upload succeeded" "$GREEN"
 EchoMessage "Requesting processing..."
 processUrl='https://api.ditt.io/process'
 data="{\"user\":\"$userName\",\"repo\":\"$repoName\",\"oid\":\"$oid\",\"type\":\"heaptrack\",\"uploadUrl\":\"$uploadUrl\"}"
-res="$(curl --silent --write-out "|%{http_code}" -H "Content-Type: application/json" -d "$data" $processUrl)"
-
-if [ "$?" -ne "0" ]; then
-    EchoError "An unknown error occurred"
-    exit 1;
-fi
-
-IFS='|' read -ra resArray <<< "$res"
-message=${resArray[0]}
-statusCode=${resArray[1]}
-
-if [ "${statusCode:-400}" -ne "200" ]; then
-    EchoError "Processing request failed: $message"
-    exit 1
-fi
+curl --silent -H "Content-Type: application/json" -d "$data" $processUrl &
 
 EchoMessage "Processing queued" "$GREEN"
 exit 0
