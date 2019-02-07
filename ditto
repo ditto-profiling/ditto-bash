@@ -287,7 +287,7 @@ fi
 
 EchoMessage "Upload succeeded" "$GREEN"
 
-EchoMessage "Processing report..."
+EchoMessage "Requesting processing..."
 processUrl='https://api.ditt.io/process'
 data="{\"user\":\"$userName\",\"repo\":\"$repoName\",\"oid\":\"$oid\",\"type\":\"heaptrack\",\"uploadUrl\":\"$uploadUrl\"}"
 res="$(curl --silent --write-out "|%{http_code}" -H "Content-Type: application/json" -d "$data" $processUrl)"
@@ -302,7 +302,7 @@ message=${resArray[0]}
 statusCode=${resArray[1]}
 
 if [ "${statusCode:-400}" -ne "200" ]; then
-    EchoError "Processing failed: $message"
+    EchoError "Processing request failed: $message"
     exit 1
 fi
 
