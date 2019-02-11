@@ -158,17 +158,17 @@ function GetUniqueFileName() {
 #---------------------------------------------------------------------------------------------------
 
 function DetectCIProvider() {
-    if ! [ -z ${TRAVIS+x} ]; then
+    if [ -n "${TRAVIS+x}" ]; then
         echo "Travis CI"
-    elif ! [ -z ${CIRCLECI+x} ]; then
+    elif [ -n "${CIRCLECI+x}" ]; then
         echo "CircleCI"
-    elif ! [ -z ${DOCKER_REPO+x} ]; then
+    elif [ -n "${DOCKER_REPO+x}" ]; then
         echo "Docker"
-    elif ! [ -z ${GITLAB_CI+x} ]; then
+    elif [ -n "${GITLAB_CI+x}" ]; then
         echo "GitLab CI"
-    elif ! [ -z ${CIRCLECI+x} ]; then
+    elif [ -n "${CIRCLECI+x}" ]; then
         echo "CircleCI"
-    elif ! [ -z ${JENKINS_URL+x} ]; then
+    elif [ -n "${JENKINS_URL+x}" ]; then
         echo "Jenkins"
     fi
 }
