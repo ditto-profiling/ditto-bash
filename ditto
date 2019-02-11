@@ -252,9 +252,7 @@ getUploadLinkUrl='https://api.ditt.io/upload'
 command -v curl >/dev/null 2>&1 || { EchoError "curl is required to upload reports but it was not found"; exit; }
 
 data="{\"user\":\"$userName\",\"repo\":\"$repoName\",\"oid\":\"$oid\",\"type\":\"heaptrack\",\"token\":\"$DITTO_TOKEN\"}"
-res="$(curl --silent --write-out "|%{http_code}" -H "Content-Type: application/json" -d "$data" $getUploadLinkUrl)"
-
-if [ "$?" -ne "0" ]; then
+if ! res="$(curl --silent --write-out "|%{http_code}" -H "Content-Type: application/json" -d "$data" $getUploadLinkUrl)"; then
     EchoError "An unknown error occurred"
     exit 1;
 fi
@@ -276,12 +274,13 @@ if [[ -z $uploadUrl ]]; then
 fi
 
 res=$(curl --write-out "|%{http_code}" -H 'Content-Type: text/plain' -H 'Content-Encoding: gzip' --upload-file "$fileLocation" "$uploadUrl")
+ret=$?
 
 if [ "$createdNewGzip" = true ]; then
     rm "$fileLocation"
 fi
 
-if [ "$?" -ne "0" ]; then
+if [ "$ret" -ne "0" ]; then
     EchoError "An unknown error occurred"
     exit 1;
 fi
