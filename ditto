@@ -89,9 +89,9 @@ function GetOid() {
     fi
 
     if [ -z "$commitOid" ]; then
-        local oid=$(git rev-parse HEAD)
+        local oid;
 
-        if [ "$?" -ne "0" ]; then
+        if ! oid=$(git rev-parse HEAD); then
             EchoError "Failed to get SHA"
             exit 1
         fi
@@ -99,7 +99,7 @@ function GetOid() {
         commitOid="$oid"
     fi
 
-    echo "$oid"
+    echo "$commitOid"
 }
 
 #---------------------------------------------------------------------------------------------------
