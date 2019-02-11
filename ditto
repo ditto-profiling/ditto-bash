@@ -66,7 +66,7 @@ function GetRegexMatch() {
        exit 1
     fi
 
-    echo ${matches[0]}
+    echo "${matches[0]}"
     return 0
 }
 
@@ -228,15 +228,15 @@ if [ "${fileLocation: -3:3}" = "zst" ]; then
     EchoMessage "Recompressing using gzip"
     command -v zstd >/dev/null 2>&1 || { EchoError "File was in zstd format but zstd was not found"; exit; }
     tmpFileLocation=$(GetUniqueFileName ditto ".$RANDOM")
-    zstd -d -o $tmpFileLocation $fileLocation >/dev/null 2>&1 || { EchoError "Failed to decompress zstd file"; exit; }
+    zstd -d -o "$tmpFileLocation" "$fileLocation" >/dev/null 2>&1 || { EchoError "Failed to decompress zstd file"; exit; }
     fileLocation="$tmpFileLocation.gz"
     fileSize=$(wc -c "$tmpFileLocation")
-    gzip -nf9 $tmpFileLocation > $fileLocation || { EchoError "Failed to compress gzip file"; exit; }
+    gzip -nf9 "$tmpFileLocation" > "$fileLocation" || { EchoError "Failed to compress gzip file"; exit; }
     createdNewGzip=true
 fi
 
 if [ -z "${fileSize+xxx}" ]; then 
-    fileSize=$(gzip -dc $fileLocation | wc -c)
+    fileSize=$(gzip -dc "$fileLocation" | wc -c)
 fi
 
 EchoMessage "Decompressed file size: $fileSize bytes"
@@ -275,10 +275,10 @@ if [[ -z $uploadUrl ]]; then
     exit 1
 fi
 
-res=$(curl --write-out "|%{http_code}" -H 'Content-Type: text/plain' -H 'Content-Encoding: gzip' --upload-file $fileLocation $uploadUrl)
+res=$(curl --write-out "|%{http_code}" -H 'Content-Type: text/plain' -H 'Content-Encoding: gzip' --upload-file "$fileLocation" "$uploadUrl")
 
 if [ "$createdNewGzip" = true ]; then
-    rm $fileLocation
+    rm "$fileLocation"
 fi
 
 if [ "$?" -ne "0" ]; then
