@@ -121,8 +121,8 @@ function GetSlug() {
         branchInfoArray=(${branchInfo//\// })
         remoteName=${branchInfoArray[0]}
 
-        regex="$remoteName[[:space:]](.*)[[:space:]]\(fetch\)"
-        remoteName=$(GetRegexMatch "$(git remote -v)" "$remoteName[[:space:]](.*)[[:space:]]\(fetch\)" "Failed to find remote with name $remoteName") || exit
+        regex="${remoteName}[[:space:]](.*)[[:space:]]\(fetch\)"
+        remoteName=$(GetRegexMatch "$(git remote -v)" "$regex" "Failed to find remote with name $remoteName") || exit
 
         if ! GetRegexMatches slug "$remoteName" ".*[/:](.*[/:].*).git"; then
             EchoError "Failed to analyze git slug for remote $remoteName"
