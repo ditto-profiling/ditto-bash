@@ -230,7 +230,7 @@ if [ "${fileLocation: -3:3}" = "zst" ]; then
     tmpFileLocation=$(GetUniqueFileName ditto ".$RANDOM")
     zstd -d -o $tmpFileLocation $fileLocation >/dev/null 2>&1 || { EchoError "Failed to decompress zstd file"; exit; }
     fileLocation="$tmpFileLocation.gz"
-    fileSize=$(cat $tmpFileLocation | wc -c)
+    fileSize=$(wc -c "$tmpFileLocation")
     gzip -nf9 $tmpFileLocation > $fileLocation || { EchoError "Failed to compress gzip file"; exit; }
     createdNewGzip=true
 fi
@@ -275,7 +275,7 @@ if [[ -z $uploadUrl ]]; then
     exit 1
 fi
 
-res=$(cat $fileLocation | curl --write-out "|%{http_code}" -H 'Content-Type: text/plain' -H 'Content-Encoding: gzip' --upload-file $fileLocation $uploadUrl)
+res=$(curl --write-out "|%{http_code}" -H 'Content-Type: text/plain' -H 'Content-Encoding: gzip' --upload-file $fileLocation $uploadUrl)
 
 if [ "$createdNewGzip" = true ]; then
     rm $fileLocation
