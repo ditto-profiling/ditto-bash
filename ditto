@@ -66,7 +66,7 @@ function GetRegexMatch() {
        exit 1
     fi
 
-    echo ${matches[0]}
+    echo "${matches[0]}"
     return 0
 }
 
@@ -89,9 +89,9 @@ function GetOid() {
     fi
 
     if [ -z "$commitOid" ]; then
-        local oid=$(git rev-parse HEAD)
+        local oid;
 
-        if [ "$?" -ne "0" ]; then
+        if ! oid=$(git rev-parse HEAD); then
             EchoError "Failed to get SHA"
             exit 1
         fi
@@ -99,7 +99,7 @@ function GetOid() {
         commitOid="$oid"
     fi
 
-    echo "$oid"
+    echo "$commitOid"
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -121,8 +121,8 @@ function GetSlug() {
         branchInfoArray=(${branchInfo//\// })
         remoteName=${branchInfoArray[0]}
 
-        regex="$remoteName[[:space:]](.*)[[:space:]]\(fetch\)"
-        remoteName=$(GetRegexMatch "$(git remote -v)" "$remoteName[[:space:]](.*)[[:space:]]\(fetch\)" "Failed to find remote with name $remoteName") || exit
+        regex="${remoteName}[[:space:]](.*)[[:space:]]\(fetch\)"
+        remoteName=$(GetRegexMatch "$(git remote -v)" "$regex" "Failed to find remote with name $remoteName") || exit
 
         if ! GetRegexMatches slug "$remoteName" ".*[/:](.*[/:].*).git"; then
             EchoError "Failed to analyze git slug for remote $remoteName"
@@ -158,17 +158,17 @@ function GetUniqueFileName() {
 #---------------------------------------------------------------------------------------------------
 
 function DetectCIProvider() {
-    if ! [ -z ${TRAVIS+x} ]; then
+    if [ -n "${TRAVIS+x}" ]; then
         echo "Travis CI"
-    elif ! [ -z ${CIRCLECI+x} ]; then
+    elif [ -n "${CIRCLECI+x}" ]; then
         echo "CircleCI"
-    elif ! [ -z ${DOCKER_REPO+x} ]; then
+    elif [ -n "${DOCKER_REPO+x}" ]; then
         echo "Docker"
-    elif ! [ -z ${GITLAB_CI+x} ]; then
+    elif [ -n "${GITLAB_CI+x}" ]; then
         echo "GitLab CI"
-    elif ! [ -z ${CIRCLECI+x} ]; then
+    elif [ -n "${CIRCLECI+x}" ]; then
         echo "CircleCI"
-    elif ! [ -z ${JENKINS_URL+x} ]; then
+    elif [ -n "${JENKINS_URL+x}" ]; then
         echo "Jenkins"
     fi
 }
@@ -228,15 +228,15 @@ if [ "${fileLocation: -3:3}" = "zst" ]; then
     EchoMessage "Recompressing using gzip"
     command -v zstd >/dev/null 2>&1 || { EchoError "File was in zstd format but zstd was not found"; exit; }
     tmpFileLocation=$(GetUniqueFileName ditto ".$RANDOM")
-    zstd -d -o $tmpFileLocation $fileLocation >/dev/null 2>&1 || { EchoError "Failed to decompress zstd file"; exit; }
+    zstd -d -o "$tmpFileLocation" "$fileLocation" >/dev/null 2>&1 || { EchoError "Failed to decompress zstd file"; exit; }
     fileLocation="$tmpFileLocation.gz"
-    fileSize=$(cat $tmpFileLocation | wc -c)
-    gzip -nf9 $tmpFileLocation > $fileLocation || { EchoError "Failed to compress gzip file"; exit; }
+    fileSize=$(wc -c < "$tmpFileLocation")
+    gzip -nf9 "$tmpFileLocation" > "$fileLocation" || { EchoError "Failed to compress gzip file"; exit; }
     createdNewGzip=true
 fi
 
 if [ -z "${fileSize+xxx}" ]; then 
-    fileSize=$(gzip -dc $fileLocation | wc -c)
+    fileSize=$(gzip -dc "$fileLocation" | wc -c)
 fi
 
 EchoMessage "Decompressed file size: $fileSize bytes"
@@ -252,9 +252,7 @@ getUploadLinkUrl='https://api.ditt.io/upload'
 command -v curl >/dev/null 2>&1 || { EchoError "curl is required to upload reports but it was not found"; exit; }
 
 data="{\"user\":\"$userName\",\"repo\":\"$repoName\",\"oid\":\"$oid\",\"type\":\"heaptrack\",\"token\":\"$DITTO_TOKEN\"}"
-res="$(curl --silent --write-out "|%{http_code}" -H "Content-Type: application/json" -d "$data" $getUploadLinkUrl)"
-
-if [ "$?" -ne "0" ]; then
+if ! res="$(curl --silent --write-out "|%{http_code}" -H "Content-Type: application/json" -d "$data" $getUploadLinkUrl)"; then
     EchoError "An unknown error occurred"
     exit 1;
 fi
@@ -275,13 +273,14 @@ if [[ -z $uploadUrl ]]; then
     exit 1
 fi
 
-res=$(cat $fileLocation | curl --write-out "|%{http_code}" -H 'Content-Type: text/plain' -H 'Content-Encoding: gzip' --upload-file $fileLocation $uploadUrl)
+res=$(curl --write-out "|%{http_code}" -H 'Content-Type: text/plain' -H 'Content-Encoding: gzip' --upload-file "$fileLocation" "$uploadUrl")
+ret=$?
 
 if [ "$createdNewGzip" = true ]; then
-    rm $fileLocation
+    rm "$fileLocation"
 fi
 
-if [ "$?" -ne "0" ]; then
+if [ "$ret" -ne "0" ]; then
     EchoError "An unknown error occurred"
     exit 1;
 fi
