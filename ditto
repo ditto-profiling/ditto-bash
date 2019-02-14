@@ -230,7 +230,7 @@ if [ "${fileLocation: -3:3}" = "zst" ]; then
     tmpFileLocation=$(GetUniqueFileName ditto ".$RANDOM")
     zstd -d -o "$tmpFileLocation" "$fileLocation" >/dev/null 2>&1 || { EchoError "Failed to decompress zstd file"; exit; }
     fileLocation="$tmpFileLocation.gz"
-    fileSize=$(wc -c "$tmpFileLocation")
+    fileSize=$(wc -c < "$tmpFileLocation")
     gzip -nf9 "$tmpFileLocation" > "$fileLocation" || { EchoError "Failed to compress gzip file"; exit; }
     createdNewGzip=true
 fi
